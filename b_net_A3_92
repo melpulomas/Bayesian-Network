@@ -1,0 +1,217 @@
+import sys
+import json
+from collections import OrderedDict 
+
+
+class BayesianNetwork(object):
+    def __init__(self, structure, values, queries):
+
+        self.variables = structure["variables"]
+        self.dependencies = structure["dependencies"]
+        self.conditional_probabilities = values["conditional_probabilities"]
+        self.prior_probabilities = values["prior_probabilities"]
+        self.queries = queries
+        self.answer = []
+        self.network = {}
+        self.atomicVariable = []
+
+
+
+    def construct(self):
+        trueValue = None
+        for variable in self.variables:
+            self.network[variable] = []
+            self.atomicVariable.append(variable)
+            for depedency in self.dependencies:
+                if variable != depedency:
+                    continue
+                temp = self.dependencies.get(depedency)
+                self.network[variable].append(temp)
+
+            for probability in self.prior_probabilities:
+                emptyList = []
+                if variable != probability:
+                    continue
+                #debugprint(probability)
+                trueValue = self.prior_probabilities.get(probability, {}).get('True')
+                #print(trueValue)
+                temp = {None:trueValue}
+                self.network[variable].append(emptyList)
+                self.network[variable].append(temp)
+
+            for condition in self.conditional_probabilities:
+                if variable != condition:
+                    continue
+                length = len(condition)
+                nestedlist = {}
+                conditionValue = self.conditional_probabilities.get(condition, {})
+                #debugprint(conditionValue)
+                for key in conditionValue:
+                    #debugprint(key)
+                    if key.get('own_value') != 'True':
+                        continue
+
+                    dependentOn = self.dependencies.get(condition)
+                   #debugprint(dependentOn)
+                    boolean = []
+                    for parent in dependentOn:
+                        valuess = key.get(parent)
+                        if valuess == "False":
+                            boolean.append(False)
+                        else:
+                            boolean.append(True)
+                    
+                    probValue = key.get("probability")
+                    booleanTuple = tuple(boolean)
+                    nestedlist[booleanTuple] = probValue
+                self.network[variable].append(nestedlist)
+        #print(self.network)
+        #print(self.atomicVariable)
+        self.atomicVariable.reverse()
+
+        pass
+
+    def enumerationAsk(self, X, e, bn,varss):
+        QX = {}
+
+        for xi in [False,True]:
+            e[X] = xi
+            QX[xi] = self.enumerateAll(varss,e,bn)
+            del e[X]
+        #return QX
+        return self.normalize(QX)
+
+
+    def infer(self):
+        numberOfQueries = len(self.queries)
+        qnumber = 1
+        self.answer = []
+
+        for query in self.queries:
+            #print(self.queries)
+            #print(query)
+            answerformat = {}
+            answerformat["index"] = qnumber
+            tofind = query.get("tofind")
+            #print(tofind)
+            variable = list(tofind.keys())[0]
+            trueOrFalse = list(tofind.values())[0]
+            queryValues = list(query.values())[1]
+            
+            #print(variable)
+            #print(queryValues)
+            #print(self.network)
+            #print(self.atomicVariable)
+            #print(str(variable), queryValues ,self.network,self.atomicVariable)
+            rawAnswer = self.enumerationAsk(str(variable), queryValues ,self.network,self.atomicVariable)
+            trueOrFalse = tofind.get(variable)
+            parseAnswer = []
+
+            for x in rawAnswer.values():
+                parseAnswer.append(x)
+            print(trueOrFalse)
+            if trueOrFalse == "True":
+                answerformat["answer"] = format(parseAnswer[0], '.2f')
+            else:
+                answerformat["answer"] = format(parseAnswer[1], '.2f')
+            
+            #print(parseAnswer)
+            #print('ANSWER FOUND {}'.format(finalAnswer))
+            #self.answer.append()
+            self.answer.append(answerformat)
+            #print(self.answer)
+            qnumber += 1
+
+        return self.answer
+
+    def Pr(self, var, val, e, bn):
+        try:
+            parents = bn[var][0]
+            #print(e)
+            #print(parents)
+
+            newParen = []
+            #debugprint('Pr***', var, val, e, bn, parents)
+            if len(parents) == 0:
+                truePr = bn[var][1][None]
+            else:
+                #debugprint('   Pr***')
+                parentVals = [e[parent] for parent in parents]
+                #print(var)
+
+                for value in parentVals:
+                    if value == False:
+                        newParen.append(False)
+                    else:
+                        newParen.append(True)
+
+                truePr = bn[var][1][tuple(newParen)]
+            print(val)
+            if val=="True": return truePr
+            else: return 1.0-truePr
+        except:
+            return 1
+
+    def normalize(self, QX):
+        total = 0.0
+        for val in QX.values():
+            total += val
+        for key in QX.keys():
+            QX[key] /= total
+        return QX
+
+    # Helper function for enumerateAsk that does the recursive calls
+    def enumerateAll(self, varss, e,bn):
+        #debugprint('EnumerateAll***', varss, e, bn)
+        if len(varss) == 0: return 1.0
+        Y = varss.pop()
+        if Y in e:
+            #print("Yes inside")
+            #print(Y)
+            #print(e)
+            val = self.Pr(Y,e[Y],e,bn) * self.enumerateAll(varss,e,bn)
+            varss.append(Y)
+            return val
+        else:
+            #print("NOT inside")
+            total = 0
+            e[Y] = True
+            total += self.Pr(Y,True,e,bn) * self.enumerateAll(varss,e,bn)
+            e[Y] = False
+            total += self.Pr(Y,False,e,bn) * self.enumerateAll(varss,e,bn)
+            del e[Y]
+            varss.append(Y)
+            return total
+def debugprint(*args):
+    pass
+    #print(args)
+def main():
+    # STRICTLY do NOT modify the code in the main function here
+    if len(sys.argv) != 4:
+        print ("\nUsage: python b_net_A3_xx.py structure.json values.json queries.json \n")
+        raise ValueError("Wrong number of arguments!")
+
+    structure_filename = sys.argv[1]
+    values_filename = sys.argv[2]
+    queries_filename = sys.argv[3]
+
+    try:
+        with open(structure_filename, 'r') as f:
+            structure = json.load(f)
+        with open(values_filename, 'r') as f:
+            values = json.load(f)
+        with open(queries_filename, 'r') as f:
+            queries = json.load(f)
+
+    except IOError:
+        raise IOError("Input file not found or not a json file")
+
+    # testing if the code works
+    b_network = BayesianNetwork(structure, values, queries)
+    b_network.construct()
+    answers = b_network.infer()
+
+
+
+if __name__ == "__main__":
+    main()
